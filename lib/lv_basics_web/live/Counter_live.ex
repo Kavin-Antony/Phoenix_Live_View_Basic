@@ -4,60 +4,74 @@ defmodule LvBasicsWeb.CounterLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       :timer.send_interval(1000, self(), :tick)
+      Phoenix.PubSub.subscribe(LvBasics.PubSub, "counter")
     end
 
     changeset = changeset(%{}, %{})
 
     {:ok,
-    assign(socket,
-      count: 0,
-      mode: :normal,
-      changeset: changeset
-    )}
+     assign(socket,
+       count: 0,
+       mode: :normal,
+       changeset: changeset
+     )}
   end
-
 
   def render(assigns) do
     ~H"""
     <h1>Counter: <%= @count %></h1>
+    <p>Mode: <%= @mode %></p>
+
     <button phx-click="dec">-</button>
     <button phx-click="inc">+</button>
-    <br>
+    <br />
     <.link patch={~p"/counter?mode=normal"}>Normal</.link>
-    |
-    <.link patch={~p"/counter?mode=fast"}>Fast</.link>
-    <p>Mode: <%= @mode %></p>
+    | <.link patch={~p"/counter?mode=fast"}>Fast</.link>
 
     <hr />
 
     <h3>Set counter value</h3>
 
     <.form
-
       :let={f}
       for={@changeset}
       as={:value}
       phx-change="validate"
-      phx-submit="save">
-
-
+      phx-submit="save"
+    >
       <.input
         field={f[:value]}
         type="number"
-        label="Value" />
+        label="Value"
+      />
 
       <button>Update</button>
     </.form>
-
     """
   end
 
-  def handle_event("inc", _unsigned_params, socket) do
-    {:noreply, update(socket, :count, &(&1 + 1))}
+  def handle_event("inc", _, socket) do
+    new_count = socket.assigns.count + 1
+
+    Phoenix.PubSub.broadcast(
+      LvBasics.PubSub,
+      "counter",
+      {:update_counter, new_count}
+    )
+
+    {:noreply, socket}
   end
 
-  def handle_event("dec", _unsigned_params, socket) do
-    {:noreply, update(socket, :count, &(&1 - 1))}
+  def handle_event("dec", _, socket) do
+    new_count = socket.assigns.count - 1
+
+    Phoenix.PubSub.broadcast(
+      LvBasics.PubSub,
+      "counter",
+      {:update_counter, new_count}
+    )
+
+    {:noreply, socket}
   end
 
   def handle_event("validate", %{"value" => params}, socket) do
@@ -69,18 +83,25 @@ defmodule LvBasicsWeb.CounterLive do
   end
 
   def handle_event("save", %{"value" => %{"value" => value}}, socket) do
-    new_changeset = changeset(%{}, %{})
+    count = String.to_integer(value)
 
-    {:noreply,
-    assign(socket,
-      count: String.to_integer(value),
-      changeset: new_changeset
-    )}
+    Phoenix.PubSub.broadcast(
+      LvBasics.PubSub,
+      "counter",
+      {:update_counter, count}
+    )
+
+    {:noreply, assign(socket, changeset: changeset(%{}, %{}))}
   end
 
-  # def handle_info(:tick, socket) do
-  #   {:noreply, update(socket, :count, &(&1 + 1))}
-  # end
+
+  def handle_info({:update_counter, new_count}, socket) do
+    {:noreply, assign(socket, count: new_count)}
+  end
+
+  def handle_info({:update_mode, mode}, socket) do
+    {:noreply, assign(socket, mode: mode)}
+  end
 
   def handle_info(:tick, socket) do
     increment =
@@ -89,17 +110,39 @@ defmodule LvBasicsWeb.CounterLive do
         _ -> 1
       end
 
-    {:noreply, update(socket, :count, &(&1 + increment))}
+    new_count = socket.assigns.count + increment
+
+    Phoenix.PubSub.broadcast(
+      LvBasics.PubSub,
+      "counter",
+      {:update_counter, new_count}
+    )
+
+    {:noreply, socket}
   end
 
 
-  def handle_params(%{"mode" => "fast"}, _, socket) do
-    {:noreply, assign(socket, mode: :fast)}
+  def handle_params(%{"mode" => mode}, _, socket) when mode in ["normal", "fast"] do
+    Phoenix.PubSub.broadcast(
+      LvBasics.PubSub,
+      "counter",
+      {:update_mode, String.to_atom(mode)}
+    )
+
+    {:noreply, socket}
   end
 
-  def handle_params(_, _, socket) do
-    {:noreply, assign(socket, mode: :normal)}
+  def handle_params(_params, _uri, socket) do
+    {:noreply, socket}
   end
+
+  # def handle_params(%{"mode" => "fast"}, _, socket) do
+  #   {:noreply, assign(socket, mode: :fast)}
+  # end
+
+  # def handle_params(_, _, socket) do
+  #   {:noreply, assign(socket, mode: :normal)}
+  # end
 
   defp changeset(data, params) do
     {data, %{value: :integer}}
@@ -107,6 +150,4 @@ defmodule LvBasicsWeb.CounterLive do
     |> Ecto.Changeset.validate_required([:value])
     |> Ecto.Changeset.validate_number(:value, greater_than_or_equal_to: 0)
   end
-
-
 end

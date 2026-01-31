@@ -17,7 +17,6 @@ defmodule LvBasicsWeb.Router do
   scope "/", LvBasicsWeb do
     pipe_through :browser
 
-
     get "/", PageController, :home
     live "/counter", CounterLive
   end
